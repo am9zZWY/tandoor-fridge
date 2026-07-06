@@ -51,12 +51,17 @@ def fetch_all_foods(base_url, token):
 # One entry per supported vision LLM provider. Each is a plain REST call, so no
 # provider SDK is needed - just a different request shape and response path.
 PROVIDERS = {
-    "anthropic": {"api_key_env": "ANTHROPIC_API_KEY", "model_env": "ANTHROPIC_MODEL",
-                  "default_model": "claude-sonnet-5"},
-    "openai": {"api_key_env": "OPENAI_API_KEY", "model_env": "OPENAI_MODEL",
-               "default_model": "gpt-4o-mini"},
-    "mistral": {"api_key_env": "MISTRAL_API_KEY", "model_env": "MISTRAL_MODEL",
-                "default_model": "pixtral-12b-2409"},
+    "anthropic": {
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "model_env": "ANTHROPIC_MODEL",
+        "default_model": "claude-sonnet-5",
+    },
+    "openai": {"api_key_env": "OPENAI_API_KEY", "model_env": "OPENAI_MODEL", "default_model": "gpt-4o-mini"},
+    "mistral": {
+        "api_key_env": "MISTRAL_API_KEY",
+        "model_env": "MISTRAL_MODEL",
+        "default_model": "pixtral-12b-2409",
+    },
 }
 
 
@@ -65,21 +70,35 @@ def _build_vision_request(provider, model, api_key, b64_image, mime_type, prompt
         url = "https://api.anthropic.com/v1/messages"
         headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
         body = {
-            "model": model, "max_tokens": 1024,
-            "messages": [{"role": "user", "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": mime_type, "data": b64_image}},
-                {"type": "text", "text": prompt_text},
-            ]}],
+            "model": model,
+            "max_tokens": 1024,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {"type": "base64", "media_type": mime_type, "data": b64_image},
+                        },
+                        {"type": "text", "text": prompt_text},
+                    ],
+                }
+            ],
         }
     elif provider == "openai":
         url = "https://api.openai.com/v1/chat/completions"
         headers = {"Authorization": f"Bearer {api_key}"}
         body = {
             "model": model,
-            "messages": [{"role": "user", "content": [
-                {"type": "text", "text": prompt_text},
-                {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64_image}"}},
-            ]}],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt_text},
+                        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64_image}"}},
+                    ],
+                }
+            ],
             "max_completion_tokens": 1024,
         }
     elif provider == "mistral":
@@ -87,10 +106,15 @@ def _build_vision_request(provider, model, api_key, b64_image, mime_type, prompt
         headers = {"Authorization": f"Bearer {api_key}"}
         body = {
             "model": model,
-            "messages": [{"role": "user", "content": [
-                {"type": "text", "text": prompt_text},
-                {"type": "image_url", "image_url": f"data:{mime_type};base64,{b64_image}"},
-            ]}],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt_text},
+                        {"type": "image_url", "image_url": f"data:{mime_type};base64,{b64_image}"},
+                    ],
+                }
+            ],
         }
     else:
         raise ValueError(f"unknown provider: {provider}")
@@ -137,8 +161,9 @@ def identify_onhand_food_ids(provider, image_bytes, mime_type, foods):
 
 
 def pick_recipes(base_url, token, slots):
-    status, data = tandoor(base_url, token, "GET", "/api/recipe/",
-                           params={"makenow": "true", "page_size": slots})
+    status, data = tandoor(
+        base_url, token, "GET", "/api/recipe/", params={"makenow": "true", "page_size": slots}
+    )
     results = data.get("results", []) if status == 200 else []
     if len(results) >= slots:
         return results[:slots]
@@ -186,16 +211,27 @@ def build_plan(provider, base_url, token, image_bytes, mime_type, days, meals_pe
                 break
             recipe = next(recipe_cycle)
             servings = recipe.get("servings") or 1
-            body = {"recipe": recipe["id"], "title": "", "servings": servings,
-                     "from_date": d, "to_date": d, "shared": []}
+            body = {
+                "recipe": recipe["id"],
+                "title": "",
+                "servings": servings,
+                "from_date": d,
+                "to_date": d,
+                "shared": [],
+            }
             if meal_type_id:
                 body["meal_type"] = meal_type_id
             status, mp = tandoor(base_url, token, "POST", "/api/meal-plan/", body=body)
             if status == 201:
                 created_meals.append({"date": d, "recipe": recipe["name"], "id": mp["id"]})
                 if recipe["id"] not in shopping_added:
-                    tandoor(base_url, token, "PUT", f"/api/recipe/{recipe['id']}/shopping/",
-                            body={"servings": servings})
+                    tandoor(
+                        base_url,
+                        token,
+                        "PUT",
+                        f"/api/recipe/{recipe['id']}/shopping/",
+                        body={"servings": servings},
+                    )
                     shopping_added.add(recipe["id"])
 
     return {
@@ -227,8 +263,9 @@ def api_plan():
         return jsonify({"error": f"server is missing {PROVIDERS[provider]['api_key_env']}"}), 500
 
     try:
-        result = build_plan(provider, base_url, token, image.read(), image.mimetype or "image/jpeg",
-                            days, meals_per_day)
+        result = build_plan(
+            provider, base_url, token, image.read(), image.mimetype or "image/jpeg", days, meals_per_day
+        )
     except Exception as e:
         return jsonify({"error": str(e)}), 502
     return jsonify(result)

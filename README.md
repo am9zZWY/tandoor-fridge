@@ -38,7 +38,7 @@ Add whichever provider key(s) you want to use to `.env` — you only need the
 one(s) you'll actually select in the UI:
 
 ```bash
-cd tandoor-ai-photo
+cd tandoor-fridge
 echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
 echo "OPENAI_API_KEY=sk-..." >> .env
 echo "MISTRAL_API_KEY=..." >> .env
@@ -64,6 +64,23 @@ with, or just use it as a throwaway sandbox.
 You do **not** need the local Tandoor at all if you only want to point the
 tool at your real, already-running Tandoor instance — it's there for testing
 and for trying the tool safely before using it on your real recipe data.
+
+## Deploying (against your real Tandoor)
+
+`docker-compose.yml` above is the local dev/test stack — it also runs a
+throwaway Tandoor instance and builds the app from source. To actually deploy
+the tool against your own existing Tandoor instance, use
+`docker-compose.prod.yml` instead. It just runs `fridgeplan`, pulling the
+image built by CI (`.github/workflows/docker-publish.yml`) from GHCR:
+
+```bash
+echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env   # whichever provider(s) you use
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Then open the app and point it at your real Tandoor URL and a read-write
+token (see below) — nothing about your Tandoor instance itself needs to
+change.
 
 ## Getting a Tandoor API token
 
@@ -92,6 +109,24 @@ have to retype them each time. Nothing is stored server-side.
 
 The result shows which foods were recognized, the meal plan that was created,
 and a link to your Tandoor shopping list.
+
+## Development
+
+Dependencies are managed with [uv](https://docs.astral.sh/uv/):
+
+```bash
+cd fridgeplan
+uv sync                      # installs deps + dev tools (ruff) into .venv
+uv run python -m unittest test_app -v
+```
+
+Linting/formatting run via [pre-commit](https://pre-commit.com), using
+[Ruff](https://docs.astral.sh/ruff/):
+
+```bash
+pre-commit install   # once, from the repo root
+pre-commit run --all-files
+```
 
 ## Limitations
 

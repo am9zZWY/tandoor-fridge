@@ -7,7 +7,7 @@ import app
 
 class ExtractIdsTest(unittest.TestCase):
     def test_extracts_json_array_even_with_surrounding_prose(self):
-        text = 'Sure, here you go:\n```json\n[3, 7, 12]\n```\nHope that helps!'
+        text = "Sure, here you go:\n```json\n[3, 7, 12]\n```\nHope that helps!"
         match = re.search(r"\[.*\]", text, re.S)
         self.assertEqual(app.json.loads(match.group(0)), [3, 7, 12])
 
@@ -20,26 +20,29 @@ class ExtractIdsTest(unittest.TestCase):
 class VisionProviderTest(unittest.TestCase):
     def test_anthropic_request_and_response_shape(self):
         url, headers, body = app._build_vision_request(
-            "anthropic", "claude-sonnet-5", "sk-ant-x", "QUJD", "image/png", "hi")
+            "anthropic", "claude-sonnet-5", "sk-ant-x", "QUJD", "image/png", "hi"
+        )
         self.assertIn("api.anthropic.com", url)
         self.assertEqual(headers["x-api-key"], "sk-ant-x")
         image_block = body["messages"][0]["content"][0]
         self.assertEqual(image_block["source"]["data"], "QUJD")
-        self.assertEqual(
-            app._extract_vision_text("anthropic", {"content": [{"text": "[1, 2]"}]}), "[1, 2]")
+        self.assertEqual(app._extract_vision_text("anthropic", {"content": [{"text": "[1, 2]"}]}), "[1, 2]")
 
     def test_openai_image_url_is_nested_under_url_key(self):
         url, headers, body = app._build_vision_request(
-            "openai", "gpt-4o-mini", "sk-oa-x", "QUJD", "image/jpeg", "hi")
+            "openai", "gpt-4o-mini", "sk-oa-x", "QUJD", "image/jpeg", "hi"
+        )
         self.assertIn("api.openai.com", url)
         image_block = body["messages"][0]["content"][1]
         self.assertEqual(image_block["image_url"]["url"], "data:image/jpeg;base64,QUJD")
         self.assertEqual(
-            app._extract_vision_text("openai", {"choices": [{"message": {"content": "[1]"}}]}), "[1]")
+            app._extract_vision_text("openai", {"choices": [{"message": {"content": "[1]"}}]}), "[1]"
+        )
 
     def test_mistral_image_url_is_a_bare_string(self):
         url, headers, body = app._build_vision_request(
-            "mistral", "pixtral-12b-2409", "sk-mi-x", "QUJD", "image/jpeg", "hi")
+            "mistral", "pixtral-12b-2409", "sk-mi-x", "QUJD", "image/jpeg", "hi"
+        )
         self.assertIn("api.mistral.ai", url)
         image_block = body["messages"][0]["content"][1]
         self.assertEqual(image_block["image_url"], "data:image/jpeg;base64,QUJD")
@@ -65,8 +68,11 @@ class PickRecipesTest(unittest.TestCase):
             if path == "/api/recipe/":
                 return 200, {"results": [{"id": 1, "servings": 2}, {"id": 2, "servings": 2}]}
             if path == "/api/recipe/1/":
-                return 200, {"steps": [{"ingredients": [
-                    {"food": {"food_onhand": True}}, {"food": {"food_onhand": False}}]}]}
+                return 200, {
+                    "steps": [
+                        {"ingredients": [{"food": {"food_onhand": True}}, {"food": {"food_onhand": False}}]}
+                    ]
+                }
             if path == "/api/recipe/2/":
                 return 200, {"steps": [{"ingredients": [{"food": {"food_onhand": True}}]}]}
             raise AssertionError(path)
