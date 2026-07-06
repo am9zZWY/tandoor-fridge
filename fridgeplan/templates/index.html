@@ -37,18 +37,22 @@
     <form id="f" class="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div>
         <label class="block text-sm font-medium text-slate-700" for="tandoor_url">Tandoor URL</label>
-        <input id="tandoor_url" name="tandoor_url" placeholder="https://recipes.example.com" required
+        <input id="tandoor_url" name="tandoor_url" placeholder="https://recipes.example.com"
           class="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 placeholder:text-slate-400
                  focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30">
+        <p class="mt-1 text-xs text-slate-400">
+          Leave blank to use this server's <code>TANDOOR_URL</code>, if it set one.
+        </p>
       </div>
 
       <div>
         <label class="block text-sm font-medium text-slate-700" for="api_token">API token (read-write)</label>
-        <input id="api_token" name="api_token" type="password" required
+        <input id="api_token" name="api_token" type="password"
           class="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm
                  focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30">
         <p class="mt-1 text-xs text-slate-400">
-          Kept only in this browser's storage — sent straight to your Tandoor, never stored on this server.
+          Kept only in this browser's storage — sent straight to your Tandoor, never stored on this
+          server. Leave blank to use this server's <code>TANDOOR_TOKEN</code>, if it set one.
         </p>
       </div>
 

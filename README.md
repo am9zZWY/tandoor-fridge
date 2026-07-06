@@ -82,6 +82,12 @@ Then open the app and point it at your real Tandoor URL and a read-write
 token (see below) — nothing about your Tandoor instance itself needs to
 change.
 
+If it's always the same Tandoor instance, set `TANDOOR_URL` and
+`TANDOOR_TOKEN` in `.env` too, and leave those two fields blank in the UI —
+the server falls back to them whenever the form doesn't supply one. Values
+typed into the form always win over the env vars, so this is optional, not
+exclusive.
+
 ## Getting a Tandoor API token
 
 Open your Tandoor instance → **Settings → API** → generate a new token.

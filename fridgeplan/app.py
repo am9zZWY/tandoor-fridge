@@ -248,8 +248,8 @@ def index():
 
 @app.post("/api/plan")
 def api_plan():
-    base_url = request.form.get("tandoor_url", "").strip()
-    token = request.form.get("api_token", "").strip()
+    base_url = request.form.get("tandoor_url", "").strip() or os.environ.get("TANDOOR_URL", "").strip()
+    token = request.form.get("api_token", "").strip() or os.environ.get("TANDOOR_TOKEN", "").strip()
     provider = request.form.get("provider", "anthropic").strip().lower()
     days = max(1, min(int(request.form.get("days", 3)), 14))
     meals_per_day = max(1, min(int(request.form.get("meals_per_day", 1)), 4))

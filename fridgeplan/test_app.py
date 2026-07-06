@@ -1,3 +1,4 @@
+import io
 import re
 import unittest
 from unittest.mock import patch
@@ -81,6 +82,56 @@ class PickRecipesTest(unittest.TestCase):
             result = app.pick_recipes("http://x", "tok", 5)
             # recipe 2 is 100% on-hand, recipe 1 is 50% -> recipe 2 ranks first
             self.assertEqual([r["id"] for r in result], [2, 1])
+
+
+class ApiPlanTest(unittest.TestCase):
+    def setUp(self):
+        self.client = app.app.test_client()
+
+    def test_falls_back_to_env_when_form_fields_are_blank(self):
+        with patch.dict(
+            app.os.environ,
+            {"TANDOOR_URL": "http://env-tandoor", "TANDOOR_TOKEN": "env-tok", "ANTHROPIC_API_KEY": "sk-x"},
+        ):
+            with patch.object(app, "build_plan", return_value={"ok": True}) as build_plan:
+                resp = self.client.post(
+                    "/api/plan",
+                    data={"image": (io.BytesIO(b"x"), "fridge.png")},
+                    content_type="multipart/form-data",
+                )
+                self.assertEqual(resp.status_code, 200)
+                build_plan.assert_called_once()
+                _, base_url, token = build_plan.call_args[0][:3]
+                self.assertEqual(base_url, "http://env-tandoor")
+                self.assertEqual(token, "env-tok")
+
+    def test_form_fields_take_priority_over_env(self):
+        with patch.dict(
+            app.os.environ,
+            {"TANDOOR_URL": "http://env-tandoor", "TANDOOR_TOKEN": "env-tok", "ANTHROPIC_API_KEY": "sk-x"},
+        ):
+            with patch.object(app, "build_plan", return_value={"ok": True}) as build_plan:
+                self.client.post(
+                    "/api/plan",
+                    data={
+                        "tandoor_url": "http://form-tandoor",
+                        "api_token": "form-tok",
+                        "image": (io.BytesIO(b"x"), "fridge.png"),
+                    },
+                    content_type="multipart/form-data",
+                )
+                _, base_url, token = build_plan.call_args[0][:3]
+                self.assertEqual(base_url, "http://form-tandoor")
+                self.assertEqual(token, "form-tok")
+
+    def test_missing_both_form_and_env_is_a_400(self):
+        with patch.dict(app.os.environ, {}, clear=True):
+            resp = self.client.post(
+                "/api/plan",
+                data={"image": (io.BytesIO(b"x"), "fridge.png")},
+                content_type="multipart/form-data",
+            )
+            self.assertEqual(resp.status_code, 400)
 
 
 if __name__ == "__main__":
