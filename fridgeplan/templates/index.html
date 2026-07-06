@@ -1,0 +1,66 @@
+<title>Fridge Planner</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+  label { display: block; margin-top: 1rem; font-weight: 600; }
+  input { width: 100%; padding: .4rem; box-sizing: border-box; }
+  .row { display: flex; gap: 1rem; }
+  .row > div { flex: 1; }
+  button { margin-top: 1.5rem; padding: .6rem 1.2rem; font-size: 1rem; }
+  pre { background: #f0f0f0; padding: 1rem; white-space: pre-wrap; }
+  .error { color: #b00020; }
+</style>
+
+<h1>Fridge → Meal Plan</h1>
+<p>Photo of your fridge in, meal plan (and shopping list, for what's missing) out.</p>
+
+<form id="f">
+  <label>Tandoor URL <input name="tandoor_url" placeholder="https://recipes.example.com" required></label>
+  <label>API Token (read-write) <input name="api_token" type="password" required></label>
+  <label>Vision provider
+    <select name="provider">
+      <option value="anthropic">Anthropic (Claude)</option>
+      <option value="openai">OpenAI</option>
+      <option value="mistral">Mistral</option>
+    </select>
+  </label>
+  <div class="row">
+    <div><label>Days <input name="days" type="number" value="3" min="1" max="14"></label></div>
+    <div><label>Meals/day <input name="meals_per_day" type="number" value="1" min="1" max="4"></label></div>
+  </div>
+  <label>Fridge photo <input name="image" type="file" accept="image/*" required></label>
+  <button type="submit">Generate plan</button>
+</form>
+
+<pre id="out" hidden></pre>
+
+<script>
+const form = document.getElementById('f');
+const out = document.getElementById('out');
+
+// remember url/token locally so you don't retype them every time
+for (const k of ['tandoor_url', 'api_token', 'provider']) {
+  const el = form.elements[k];
+  el.value = localStorage.getItem(k) || '';
+  el.addEventListener('change', () => localStorage.setItem(k, el.value));
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  out.hidden = false;
+  out.className = '';
+  out.textContent = 'Looking in your fridge...';
+  try {
+    const res = await fetch('/api/plan', { method: 'POST', body: new FormData(form) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    out.textContent =
+      `Recognized on hand: ${data.onhand_matched.join(', ') || '(none matched)'}\n\n` +
+      `Meal plan:\n` + data.meals.map(m => `  ${m.date}: ${m.recipe}`).join('\n') +
+      (data.meals.length ? '' : '  (no recipes could be scheduled)') +
+      `\n\nShopping list: ${data.shopping_list_url}`;
+  } catch (err) {
+    out.className = 'error';
+    out.textContent = 'Error: ' + err.message;
+  }
+});
+</script>
