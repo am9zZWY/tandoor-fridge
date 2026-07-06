@@ -5,6 +5,7 @@ description = "Fridge photo -> Tandoor meal plan and shopping list"
 requires-python = ">=3.12"
 dependencies = [
     "flask==3.*",
+    "gunicorn>=23",
 ]
 
 [dependency-groups]

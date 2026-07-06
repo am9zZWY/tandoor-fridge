@@ -11,4 +11,4 @@ RUN uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 5050
-CMD ["python", "app.py"]
+CMD ["gunicorn", "--bind", "0.0.0.0:5050", "--workers", "2", "--threads", "4", "app:app"]
