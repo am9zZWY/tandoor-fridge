@@ -34,14 +34,16 @@
       </p>
     </div>
 
+    {% if providers %}
     <form id="f" class="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div>
         <label class="block text-sm font-medium text-slate-700" for="tandoor_url">Tandoor URL</label>
-        <input id="tandoor_url" name="tandoor_url" placeholder="https://recipes.example.com"
+        <input id="tandoor_url" name="tandoor_url" placeholder="recipes.example.com"
           class="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 placeholder:text-slate-400
                  focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30">
         <p class="mt-1 text-xs text-slate-400">
-          Leave blank to use this server's <code>TANDOOR_URL</code>, if it set one.
+          A bare hostname gets <code>https://</code> added automatically. Leave blank to use this
+          server's <code>TANDOOR_URL</code>, if it set one.
         </p>
       </div>
 
@@ -61,9 +63,9 @@
         <select id="provider" name="provider"
           class="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2
                  focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30">
-          <option value="anthropic">Anthropic (Claude)</option>
-          <option value="openai">OpenAI</option>
-          <option value="mistral">Mistral</option>
+          {% for p in providers %}
+          <option value="{{ p.value }}">{{ p.label }}</option>
+          {% endfor %}
         </select>
       </div>
 
@@ -97,6 +99,15 @@
         Generate plan
       </button>
     </form>
+    {% else %}
+    <div class="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-amber-800">
+      <p class="font-semibold">No vision provider is configured on this server.</p>
+      <p class="mt-1 text-sm">
+        Set at least one of <code>ANTHROPIC_API_KEY</code>, <code>OPENAI_API_KEY</code>, or
+        <code>MISTRAL_API_KEY</code> in its environment, then reload this page.
+      </p>
+    </div>
+    {% endif %}
 
     <pre id="out" hidden class="mt-6 whitespace-pre-wrap rounded-2xl border p-5 font-mono text-sm shadow-sm"></pre>
   </main>
@@ -108,14 +119,20 @@ const OUT_BASE = 'mt-6 whitespace-pre-wrap rounded-2xl border p-5 font-mono text
 const OUT_NORMAL = OUT_BASE + ' border-slate-200 bg-white text-slate-700';
 const OUT_ERROR = OUT_BASE + ' border-red-200 bg-red-50 text-red-700';
 
-// remember url/token locally so you don't retype them every time
-for (const k of ['tandoor_url', 'api_token', 'provider']) {
-  const el = form.elements[k];
-  el.value = localStorage.getItem(k) || '';
-  el.addEventListener('change', () => localStorage.setItem(k, el.value));
+if (form) {
+  // remember url/token/provider locally so you don't retype them every time
+  for (const k of ['tandoor_url', 'api_token', 'provider']) {
+    const el = form.elements[k];
+    const saved = localStorage.getItem(k);
+    if (saved !== null) el.value = saved;
+    // a select whose saved value is no longer offered (e.g. that provider's key
+    // got removed) ends up with nothing selected - fall back to the first option
+    if (el.tagName === 'SELECT' && el.selectedIndex === -1) el.selectedIndex = 0;
+    el.addEventListener('change', () => localStorage.setItem(k, el.value));
+  }
 }
 
-form.addEventListener('submit', async (e) => {
+form?.addEventListener('submit', async (e) => {
   e.preventDefault();
   out.hidden = false;
   out.className = OUT_NORMAL;

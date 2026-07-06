@@ -18,6 +18,33 @@ class ExtractIdsTest(unittest.TestCase):
         self.assertEqual(ids, [1, 2])
 
 
+class ConfiguredProvidersTest(unittest.TestCase):
+    def test_only_providers_with_a_key_set_are_listed(self):
+        with patch.dict(app.os.environ, {"OPENAI_API_KEY": "sk-x"}, clear=True):
+            self.assertEqual(app.configured_providers(), [{"value": "openai", "label": "OpenAI"}])
+
+    def test_none_configured_gives_empty_list(self):
+        with patch.dict(app.os.environ, {}, clear=True):
+            self.assertEqual(app.configured_providers(), [])
+
+
+class NormalizeTandoorUrlTest(unittest.TestCase):
+    def test_bare_hostname_gets_https_prefix(self):
+        self.assertEqual(app.normalize_tandoor_url("recipes.example.com"), "https://recipes.example.com")
+
+    def test_explicit_scheme_is_left_alone(self):
+        self.assertEqual(app.normalize_tandoor_url("http://localhost:8080"), "http://localhost:8080")
+        self.assertEqual(
+            app.normalize_tandoor_url("https://recipes.example.com"), "https://recipes.example.com"
+        )
+
+    def test_trailing_slash_is_stripped(self):
+        self.assertEqual(app.normalize_tandoor_url("recipes.example.com/"), "https://recipes.example.com")
+
+    def test_blank_stays_blank(self):
+        self.assertEqual(app.normalize_tandoor_url(""), "")
+
+
 class VisionProviderTest(unittest.TestCase):
     def test_anthropic_request_and_response_shape(self):
         url, headers, body = app._build_vision_request(

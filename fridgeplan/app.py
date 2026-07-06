@@ -52,17 +52,39 @@ def fetch_all_foods(base_url, token):
 # provider SDK is needed - just a different request shape and response path.
 PROVIDERS = {
     "anthropic": {
+        "label": "Anthropic (Claude)",
         "api_key_env": "ANTHROPIC_API_KEY",
         "model_env": "ANTHROPIC_MODEL",
         "default_model": "claude-sonnet-5",
     },
-    "openai": {"api_key_env": "OPENAI_API_KEY", "model_env": "OPENAI_MODEL", "default_model": "gpt-4o-mini"},
+    "openai": {
+        "label": "OpenAI",
+        "api_key_env": "OPENAI_API_KEY",
+        "model_env": "OPENAI_MODEL",
+        "default_model": "gpt-4o-mini",
+    },
     "mistral": {
+        "label": "Mistral",
         "api_key_env": "MISTRAL_API_KEY",
         "model_env": "MISTRAL_MODEL",
         "default_model": "pixtral-12b-2409",
     },
 }
+
+
+def configured_providers():
+    return [
+        {"value": key, "label": cfg["label"]}
+        for key, cfg in PROVIDERS.items()
+        if os.environ.get(cfg["api_key_env"])
+    ]
+
+
+def normalize_tandoor_url(url):
+    url = url.strip().rstrip("/")
+    if url and not re.match(r"^https?://", url):
+        url = "https://" + url
+    return url
 
 
 def _build_vision_request(provider, model, api_key, b64_image, mime_type, prompt_text):
@@ -243,12 +265,13 @@ def build_plan(provider, base_url, token, image_bytes, mime_type, days, meals_pe
 
 @app.get("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", providers=configured_providers())
 
 
 @app.post("/api/plan")
 def api_plan():
     base_url = request.form.get("tandoor_url", "").strip() or os.environ.get("TANDOOR_URL", "").strip()
+    base_url = normalize_tandoor_url(base_url)
     token = request.form.get("api_token", "").strip() or os.environ.get("TANDOOR_TOKEN", "").strip()
     provider = request.form.get("provider", "anthropic").strip().lower()
     days = max(1, min(int(request.form.get("days", 3)), 14))
