@@ -3,7 +3,7 @@ services:
     image: ghcr.io/am9zzwy/tandoor-fridge/fridgeplan:latest
     restart: unless-stopped
     ports:
-      - "5050:5000"
+      - "5050:5050"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}

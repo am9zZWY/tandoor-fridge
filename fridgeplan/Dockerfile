@@ -10,5 +10,5 @@ COPY . .
 RUN uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"
-EXPOSE 5000
+EXPOSE 5050
 CMD ["python", "app.py"]
