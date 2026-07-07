@@ -36,17 +36,29 @@
 
     {% if providers %}
     <form id="f" class="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      {% if env_tandoor_url %}
+      <div>
+        <p class="block text-sm font-medium text-slate-700">Tandoor URL</p>
+        <p class="mt-1.5 text-sm text-slate-500">Sends your recipes to <code>{{ env_tandoor_url }}</code>.</p>
+      </div>
+      {% else %}
       <div>
         <label class="block text-sm font-medium text-slate-700" for="tandoor_url">Tandoor URL</label>
         <input id="tandoor_url" name="tandoor_url" placeholder="recipes.example.com"
           class="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 placeholder:text-slate-400
                  focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30">
         <p class="mt-1 text-xs text-slate-400">
-          A bare hostname gets <code>https://</code> added automatically. Leave blank to use this
-          server's <code>TANDOOR_URL</code>, if it set one.
+          A bare hostname gets <code>https://</code> added automatically.
         </p>
       </div>
+      {% endif %}
 
+      {% if env_tandoor_token_set %}
+      <div>
+        <p class="block text-sm font-medium text-slate-700">API token</p>
+        <p class="mt-1.5 text-sm text-slate-500">Using this server's configured token.</p>
+      </div>
+      {% else %}
       <div>
         <label class="block text-sm font-medium text-slate-700" for="api_token">API token (read-write)</label>
         <input id="api_token" name="api_token" type="password"
@@ -54,9 +66,10 @@
                  focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30">
         <p class="mt-1 text-xs text-slate-400">
           Kept only in this browser's storage — sent straight to your Tandoor, never stored on this
-          server. Leave blank to use this server's <code>TANDOOR_TOKEN</code>, if it set one.
+          server.
         </p>
       </div>
+      {% endif %}
 
       <div>
         <label class="block text-sm font-medium text-slate-700" for="provider">Vision provider</label>
@@ -86,17 +99,17 @@
 
       <div>
         <label class="block text-sm font-medium text-slate-700" for="image">Fridge photo</label>
-        <input id="image" name="image" type="file" accept="image/*" capture="environment" required
+        <input id="image" name="image" type="file" accept="image/*" required
           class="mt-1.5 w-full rounded-lg border border-slate-300 text-sm
                  file:mr-3 file:rounded-md file:border-0 file:bg-brand-50 file:px-3 file:py-2
                  file:text-sm file:font-medium file:text-brand-700 hover:file:bg-brand-100
                  focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30">
       </div>
 
-      <button type="submit"
+      <button type="submit" id="previewBtn"
         class="w-full rounded-lg bg-brand-600 px-4 py-2.5 font-semibold text-white transition
                hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:ring-offset-2">
-        Generate plan
+        Look in fridge
       </button>
     </form>
     {% else %}
@@ -109,20 +122,54 @@
     </div>
     {% endif %}
 
-    <pre id="out" hidden class="mt-6 whitespace-pre-wrap rounded-2xl border p-5 font-mono text-sm shadow-sm"></pre>
+    <div id="review" hidden class="mt-6 space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div>
+        <h2 class="text-sm font-semibold text-slate-700">Review meals</h2>
+        <p id="onhandNote" class="mt-1 text-xs text-slate-400"></p>
+      </div>
+      <div id="slots" class="space-y-2"></div>
+      <button id="confirmBtn" type="button"
+        class="w-full rounded-lg bg-brand-600 px-4 py-2.5 font-semibold text-white transition
+               hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:ring-offset-2
+               disabled:cursor-not-allowed disabled:opacity-50">
+        Create plan in Tandoor
+      </button>
+    </div>
+
+    <div id="out" hidden class="mt-6 rounded-2xl border p-5 text-sm shadow-sm"></div>
   </main>
 
 <script>
 const form = document.getElementById('f');
 const out = document.getElementById('out');
-const OUT_BASE = 'mt-6 whitespace-pre-wrap rounded-2xl border p-5 font-mono text-sm shadow-sm';
+const review = document.getElementById('review');
+const slotsEl = document.getElementById('slots');
+const onhandNote = document.getElementById('onhandNote');
+const confirmBtn = document.getElementById('confirmBtn');
+const OUT_BASE = 'mt-6 rounded-2xl border p-5 text-sm shadow-sm';
 const OUT_NORMAL = OUT_BASE + ' border-slate-200 bg-white text-slate-700';
 const OUT_ERROR = OUT_BASE + ' border-red-200 bg-red-50 text-red-700';
+
+let candidates = [];
+let slots = [];
+
+function localizeDate(iso) {
+  return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric',
+  });
+}
+
+function showMessage(text, isError) {
+  out.hidden = false;
+  out.className = isError ? OUT_ERROR : OUT_NORMAL;
+  out.textContent = text;
+}
 
 if (form) {
   // remember url/token/provider locally so you don't retype them every time
   for (const k of ['tandoor_url', 'api_token', 'provider']) {
     const el = form.elements[k];
+    if (!el) continue;
     const saved = localStorage.getItem(k);
     if (saved !== null) el.value = saved;
     // a select whose saved value is no longer offered (e.g. that provider's key
@@ -132,23 +179,158 @@ if (form) {
   }
 }
 
+function renderSlots() {
+  slotsEl.innerHTML = '';
+  slots.forEach((slot) => {
+    const row = document.createElement('div');
+    row.className = 'rounded-lg border border-slate-200 p-3';
+
+    const top = document.createElement('div');
+    top.className = 'flex items-center gap-3';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = slot.include;
+    checkbox.className = 'h-4 w-4 shrink-0 rounded border-slate-300 text-brand-600 focus:ring-brand-500';
+    checkbox.addEventListener('change', () => { slot.include = checkbox.checked; });
+
+    const info = document.createElement('div');
+    info.className = 'min-w-0 flex-1';
+    const dateEl = document.createElement('div');
+    dateEl.className = 'text-xs font-medium text-slate-500';
+    dateEl.textContent = localizeDate(slot.date);
+    const nameEl = document.createElement('div');
+    nameEl.className = 'truncate text-sm text-slate-800';
+    nameEl.textContent = slot.recipe_name;
+    info.append(dateEl, nameEl);
+
+    const regenBtn = document.createElement('button');
+    regenBtn.type = 'button';
+    regenBtn.textContent = 'Regenerate';
+    regenBtn.disabled = candidates.length < 2;
+    regenBtn.className = 'shrink-0 rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium ' +
+      'text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50';
+    regenBtn.addEventListener('click', () => {
+      slot.candidateIndex = (slot.candidateIndex + 1) % candidates.length;
+      const c = candidates[slot.candidateIndex];
+      slot.recipe_id = c.id;
+      slot.recipe_name = c.name;
+      slot.servings = c.servings;
+      renderSlots();
+    });
+
+    top.append(checkbox, info, regenBtn);
+    row.appendChild(top);
+
+    const ingredients = candidates.find((c) => c.id === slot.recipe_id)?.ingredients || [];
+    if (ingredients.length) {
+      const details = document.createElement('details');
+      details.className = 'mt-1 pl-7';
+      const summary = document.createElement('summary');
+      summary.className = 'cursor-pointer select-none text-xs text-brand-600';
+      summary.textContent = `Ingredients (${ingredients.length})`;
+      const ul = document.createElement('ul');
+      ul.className = 'mt-1 list-disc space-y-0.5 pl-4';
+      for (const ing of ingredients) {
+        const li = document.createElement('li');
+        li.className = 'text-xs ' + (ing.onhand ? 'text-slate-400 line-through' : 'text-slate-600');
+        const amount = [ing.amount, ing.unit].filter(Boolean).join(' ');
+        li.textContent = amount ? `${amount} ${ing.food}` : ing.food;
+        ul.appendChild(li);
+      }
+      details.append(summary, ul);
+      row.appendChild(details);
+    }
+
+    slotsEl.appendChild(row);
+  });
+}
+
 form?.addEventListener('submit', async (e) => {
   e.preventDefault();
-  out.hidden = false;
-  out.className = OUT_NORMAL;
-  out.textContent = 'Looking in your fridge...';
+  review.hidden = true;
+  showMessage('Looking in your fridge...', false);
   try {
-    const res = await fetch('/api/plan', { method: 'POST', body: new FormData(form) });
+    const res = await fetch('/api/plan/preview', { method: 'POST', body: new FormData(form) });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.statusText);
-    out.textContent =
-      `Recognized on hand: ${data.onhand_matched.join(', ') || '(none matched)'}\n\n` +
-      `Meal plan:\n` + data.meals.map(m => `  ${m.date}: ${m.recipe}`).join('\n') +
-      (data.meals.length ? '' : '  (no recipes could be scheduled)') +
-      `\n\nShopping list: ${data.shopping_list_url}`;
+
+    candidates = data.candidates;
+    slots = data.slots.map((s) => ({
+      ...s,
+      include: true,
+      candidateIndex: Math.max(0, candidates.findIndex((c) => c.id === s.recipe_id)),
+    }));
+
+    if (!slots.length) {
+      showMessage('Recognized on hand: ' + (data.onhand_matched.join(', ') || '(none matched)') +
+        '\n\nNo recipes could be scheduled.', false);
+      return;
+    }
+
+    onhandNote.textContent = 'Recognized on hand: ' + (data.onhand_matched.join(', ') || '(none matched)');
+    out.hidden = true;
+    review.hidden = false;
+    renderSlots();
   } catch (err) {
-    out.className = OUT_ERROR;
-    out.textContent = 'Error: ' + err.message;
+    showMessage('Error: ' + err.message, true);
+  }
+});
+
+confirmBtn.addEventListener('click', async () => {
+  const chosen = slots.filter((s) => s.include);
+  if (!chosen.length) {
+    showMessage('Select at least one meal first.', true);
+    return;
+  }
+  confirmBtn.disabled = true;
+  showMessage('Creating plan in Tandoor...', false);
+  try {
+    const res = await fetch('/api/plan/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tandoor_url: form.elements['tandoor_url']?.value || '',
+        api_token: form.elements['api_token']?.value || '',
+        slots: chosen.map((s) => ({
+          date: s.date, recipe_id: s.recipe_id, recipe_name: s.recipe_name, servings: s.servings,
+        })),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+
+    out.hidden = false;
+    out.className = OUT_NORMAL;
+    out.innerHTML = '';
+
+    const list = document.createElement('ul');
+    list.className = 'list-disc space-y-0.5 pl-4';
+    for (const m of data.meals) {
+      const li = document.createElement('li');
+      li.textContent = `${localizeDate(m.date)}: ${m.recipe}`;
+      list.appendChild(li);
+    }
+    out.appendChild(list);
+
+    const links = document.createElement('p');
+    links.className = 'mt-3 space-x-4';
+    for (const [label, url] of [['View meal plan', data.meal_plan_url], ['Shopping list', data.shopping_list_url]]) {
+      const a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.className = 'text-brand-600 underline hover:text-brand-700';
+      a.textContent = label;
+      links.appendChild(a);
+    }
+    out.appendChild(links);
+
+    review.hidden = true;
+  } catch (err) {
+    showMessage('Error: ' + err.message, true);
+  } finally {
+    confirmBtn.disabled = false;
   }
 });
 </script>

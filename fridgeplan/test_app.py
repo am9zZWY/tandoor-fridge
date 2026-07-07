@@ -85,8 +85,9 @@ class PickRecipesTest(unittest.TestCase):
     def test_uses_makenow_when_it_fills_all_slots(self):
         with patch.object(app, "tandoor") as t:
             t.return_value = (200, {"results": [{"id": 1}, {"id": 2}]})
-            result = app.pick_recipes("http://x", "tok", 2)
+            result, ingredients_by_id = app.pick_recipes("http://x", "tok", 2)
             self.assertEqual([r["id"] for r in result], [1, 2])
+            self.assertEqual(ingredients_by_id, {})
             t.assert_called_once()  # only the makenow lookup, no fallback scan
 
     def test_falls_back_to_ranking_by_onhand_fraction(self):
@@ -98,20 +99,39 @@ class PickRecipesTest(unittest.TestCase):
             if path == "/api/recipe/1/":
                 return 200, {
                     "steps": [
-                        {"ingredients": [{"food": {"food_onhand": True}}, {"food": {"food_onhand": False}}]}
+                        {
+                            "ingredients": [
+                                {"food": {"name": "A", "food_onhand": True}},
+                                {"food": {"name": "B", "food_onhand": False}},
+                            ]
+                        }
                     ]
                 }
             if path == "/api/recipe/2/":
-                return 200, {"steps": [{"ingredients": [{"food": {"food_onhand": True}}]}]}
+                return 200, {"steps": [{"ingredients": [{"food": {"name": "A", "food_onhand": True}}]}]}
             raise AssertionError(path)
 
         with patch.object(app, "tandoor", side_effect=fake_tandoor):
-            result = app.pick_recipes("http://x", "tok", 5)
+            result, ingredients_by_id = app.pick_recipes("http://x", "tok", 5)
             # recipe 2 is 100% on-hand, recipe 1 is 50% -> recipe 2 ranks first
             self.assertEqual([r["id"] for r in result], [2, 1])
+            self.assertEqual(len(ingredients_by_id[1]), 2)
+            self.assertEqual(len(ingredients_by_id[2]), 1)
 
 
-class ApiPlanTest(unittest.TestCase):
+class BuildSlotsTest(unittest.TestCase):
+    def test_cycles_recipes_across_days_and_meals(self):
+        recipes = [{"id": 1, "name": "A", "servings": 2}, {"id": 2, "name": "B", "servings": 3}]
+        slots = app.build_slots(recipes, days=2, meals_per_day=2)
+        self.assertEqual([s["recipe_id"] for s in slots], [1, 2, 1, 2])
+        self.assertEqual(slots[0]["date"], slots[1]["date"])
+        self.assertNotEqual(slots[0]["date"], slots[2]["date"])
+
+    def test_empty_recipes_gives_no_slots(self):
+        self.assertEqual(app.build_slots([], days=3, meals_per_day=1), [])
+
+
+class ApiPlanPreviewTest(unittest.TestCase):
     def setUp(self):
         self.client = app.app.test_client()
 
@@ -120,15 +140,15 @@ class ApiPlanTest(unittest.TestCase):
             app.os.environ,
             {"TANDOOR_URL": "http://env-tandoor", "TANDOOR_TOKEN": "env-tok", "ANTHROPIC_API_KEY": "sk-x"},
         ):
-            with patch.object(app, "build_plan", return_value={"ok": True}) as build_plan:
+            with patch.object(app, "propose_plan", return_value={"ok": True}) as propose_plan:
                 resp = self.client.post(
-                    "/api/plan",
+                    "/api/plan/preview",
                     data={"image": (io.BytesIO(b"x"), "fridge.png")},
                     content_type="multipart/form-data",
                 )
                 self.assertEqual(resp.status_code, 200)
-                build_plan.assert_called_once()
-                _, base_url, token = build_plan.call_args[0][:3]
+                propose_plan.assert_called_once()
+                _, base_url, token = propose_plan.call_args[0][:3]
                 self.assertEqual(base_url, "http://env-tandoor")
                 self.assertEqual(token, "env-tok")
 
@@ -137,9 +157,9 @@ class ApiPlanTest(unittest.TestCase):
             app.os.environ,
             {"TANDOOR_URL": "http://env-tandoor", "TANDOOR_TOKEN": "env-tok", "ANTHROPIC_API_KEY": "sk-x"},
         ):
-            with patch.object(app, "build_plan", return_value={"ok": True}) as build_plan:
+            with patch.object(app, "propose_plan", return_value={"ok": True}) as propose_plan:
                 self.client.post(
-                    "/api/plan",
+                    "/api/plan/preview",
                     data={
                         "tandoor_url": "http://form-tandoor",
                         "api_token": "form-tok",
@@ -147,18 +167,59 @@ class ApiPlanTest(unittest.TestCase):
                     },
                     content_type="multipart/form-data",
                 )
-                _, base_url, token = build_plan.call_args[0][:3]
+                _, base_url, token = propose_plan.call_args[0][:3]
                 self.assertEqual(base_url, "http://form-tandoor")
                 self.assertEqual(token, "form-tok")
 
     def test_missing_both_form_and_env_is_a_400(self):
         with patch.dict(app.os.environ, {}, clear=True):
             resp = self.client.post(
-                "/api/plan",
+                "/api/plan/preview",
                 data={"image": (io.BytesIO(b"x"), "fridge.png")},
                 content_type="multipart/form-data",
             )
             self.assertEqual(resp.status_code, 400)
+
+
+class ApiPlanConfirmTest(unittest.TestCase):
+    def setUp(self):
+        self.client = app.app.test_client()
+
+    def test_creates_meal_plan_entries_and_dedupes_shopping_list_calls(self):
+        calls = []
+
+        def fake_tandoor(base, token, method, path, params=None, body=None):
+            calls.append((method, path, body))
+            if path == "/api/meal-type/":
+                return 200, {"results": [{"id": 7}]}
+            if path == "/api/meal-plan/":
+                return 201, {"id": len(calls)}
+            if path.endswith("/shopping/"):
+                return 200, {}
+            raise AssertionError(path)
+
+        with patch.object(app, "tandoor", side_effect=fake_tandoor):
+            resp = self.client.post(
+                "/api/plan/confirm",
+                json={
+                    "tandoor_url": "http://x",
+                    "api_token": "tok",
+                    "slots": [
+                        {"date": "2026-01-01", "recipe_id": 1, "recipe_name": "A", "servings": 2},
+                        {"date": "2026-01-02", "recipe_id": 1, "recipe_name": "A", "servings": 2},
+                    ],
+                },
+            )
+        data = resp.get_json()
+        self.assertEqual(len(data["meals"]), 2)
+        shopping_calls = [c for c in calls if c[1].endswith("/shopping/")]
+        self.assertEqual(len(shopping_calls), 1)  # same recipe both days -> only added once
+
+    def test_missing_slots_is_a_400(self):
+        resp = self.client.post(
+            "/api/plan/confirm", json={"tandoor_url": "http://x", "api_token": "tok", "slots": []}
+        )
+        self.assertEqual(resp.status_code, 400)
 
 
 if __name__ == "__main__":

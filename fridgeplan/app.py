@@ -182,94 +182,157 @@ def identify_onhand_food_ids(provider, image_bytes, mime_type, foods):
     return [int(i) for i in ids if int(i) in foods]
 
 
+def extract_ingredients(detail):
+    out = []
+    for step in detail.get("steps", []):
+        for ing in step.get("ingredients", []):
+            if ing.get("is_header") or not ing.get("food"):
+                continue
+            food = ing["food"]
+            out.append(
+                {
+                    "food": food["name"],
+                    "amount": ing.get("amount") or None,
+                    "unit": (ing.get("unit") or {}).get("name", ""),
+                    "onhand": bool(food.get("food_onhand")),
+                }
+            )
+    return out
+
+
 def pick_recipes(base_url, token, slots):
     status, data = tandoor(
         base_url, token, "GET", "/api/recipe/", params={"makenow": "true", "page_size": slots}
     )
     results = data.get("results", []) if status == 200 else []
     if len(results) >= slots:
-        return results[:slots]
+        return results[:slots], {}
 
     # ponytail: scans up to 100 recipes with one detail fetch each (N+1) to rank by
     # fraction of on-hand ingredients. Fine for a personal collection; if this ever
     # needs to scale past ~100 recipes, replace with a server-side ingredient filter.
     status, data = tandoor(base_url, token, "GET", "/api/recipe/", params={"page_size": 100})
     candidates = data.get("results", []) if status == 200 else []
-    scored = []
+    scored, ingredients_by_id = [], {}
     for r in candidates:
         status, detail = tandoor(base_url, token, "GET", f"/api/recipe/{r['id']}/")
         if status != 200:
             continue
-        onhand_flags = [
-            ing["food"]["food_onhand"]
-            for step in detail.get("steps", [])
-            for ing in step.get("ingredients", [])
-            if not ing.get("is_header") and ing.get("food")
-        ]
+        ingredients = extract_ingredients(detail)
+        ingredients_by_id[r["id"]] = ingredients
+        onhand_flags = [ing["onhand"] for ing in ingredients]
         if onhand_flags:
             scored.append((sum(onhand_flags) / len(onhand_flags), r))
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [r for _, r in scored]
+    return [r for _, r in scored], ingredients_by_id
 
 
-def build_plan(provider, base_url, token, image_bytes, mime_type, days, meals_per_day):
+def build_slots(recipes, days, meals_per_day):
+    if not recipes:
+        return []
+    recipe_cycle = itertools.cycle(recipes)
+    today = date.today()
+    slots = []
+    for day_offset in range(days):
+        d = (today + timedelta(days=day_offset)).isoformat()
+        for _ in range(meals_per_day):
+            recipe = next(recipe_cycle)
+            slots.append(
+                {
+                    "date": d,
+                    "recipe_id": recipe["id"],
+                    "recipe_name": recipe["name"],
+                    "servings": recipe.get("servings") or 1,
+                }
+            )
+    return slots
+
+
+def _dedup_candidates(recipes, ingredients_by_id):
+    seen, out = set(), []
+    for r in recipes:
+        if r["id"] in seen:
+            continue
+        seen.add(r["id"])
+        out.append(
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "servings": r.get("servings") or 1,
+                "ingredients": ingredients_by_id.get(r["id"], []),
+            }
+        )
+    return out
+
+
+def propose_plan(provider, base_url, token, image_bytes, mime_type, days, meals_per_day):
     foods = fetch_all_foods(base_url, token)
     onhand_ids = identify_onhand_food_ids(provider, image_bytes, mime_type, foods)
     for fid in onhand_ids:
         tandoor(base_url, token, "PATCH", f"/api/food/{fid}/", body={"food_onhand": True})
 
-    recipes = pick_recipes(base_url, token, days * meals_per_day)
-
-    status, meal_types = tandoor(base_url, token, "GET", "/api/meal-type/", params={"page_size": 10})
-    meal_type_id = meal_types["results"][0]["id"] if meal_types.get("results") else None
-
-    created_meals, shopping_added = [], set()
-    recipe_cycle = itertools.cycle(recipes) if recipes else None
-    today = date.today()
-    for day_offset in range(days):
-        d = (today + timedelta(days=day_offset)).isoformat()
-        for _ in range(meals_per_day):
-            if recipe_cycle is None:
-                break
-            recipe = next(recipe_cycle)
-            servings = recipe.get("servings") or 1
-            body = {
-                "recipe": recipe["id"],
-                "title": "",
-                "servings": servings,
-                "from_date": d,
-                "to_date": d,
-                "shared": [],
-            }
-            if meal_type_id:
-                body["meal_type"] = meal_type_id
-            status, mp = tandoor(base_url, token, "POST", "/api/meal-plan/", body=body)
-            if status == 201:
-                created_meals.append({"date": d, "recipe": recipe["name"], "id": mp["id"]})
-                if recipe["id"] not in shopping_added:
-                    tandoor(
-                        base_url,
-                        token,
-                        "PUT",
-                        f"/api/recipe/{recipe['id']}/shopping/",
-                        body={"servings": servings},
-                    )
-                    shopping_added.add(recipe["id"])
+    recipes, ingredients_by_id = pick_recipes(base_url, token, days * meals_per_day)
+    for r in recipes:
+        if r["id"] not in ingredients_by_id:
+            status, detail = tandoor(base_url, token, "GET", f"/api/recipe/{r['id']}/")
+            ingredients_by_id[r["id"]] = extract_ingredients(detail) if status == 200 else []
 
     return {
         "onhand_matched": [foods[i] for i in onhand_ids],
+        "candidates": _dedup_candidates(recipes, ingredients_by_id),
+        "slots": build_slots(recipes, days, meals_per_day),
+    }
+
+
+def fetch_meal_type_id(base_url, token):
+    status, meal_types = tandoor(base_url, token, "GET", "/api/meal-type/", params={"page_size": 10})
+    return meal_types["results"][0]["id"] if status == 200 and meal_types.get("results") else None
+
+
+def confirm_plan(base_url, token, slots):
+    meal_type_id = fetch_meal_type_id(base_url, token)
+    created_meals, shopping_added = [], set()
+    for slot in slots:
+        servings = slot.get("servings") or 1
+        body = {
+            "recipe": slot["recipe_id"],
+            "title": "",
+            "servings": servings,
+            "from_date": slot["date"],
+            "to_date": slot["date"],
+            "shared": [],
+        }
+        if meal_type_id:
+            body["meal_type"] = meal_type_id
+        status, mp = tandoor(base_url, token, "POST", "/api/meal-plan/", body=body)
+        if status == 201:
+            created_meals.append(
+                {"date": slot["date"], "recipe": slot.get("recipe_name", ""), "id": mp["id"]}
+            )
+            rid = slot["recipe_id"]
+            if rid not in shopping_added:
+                tandoor(base_url, token, "PUT", f"/api/recipe/{rid}/shopping/", body={"servings": servings})
+                shopping_added.add(rid)
+
+    return {
         "meals": created_meals,
+        "meal_plan_url": base_url.rstrip("/") + "/plan",
         "shopping_list_url": base_url.rstrip("/") + "/list",
     }
 
 
 @app.get("/")
 def index():
-    return render_template("index.html", providers=configured_providers())
+    return render_template(
+        "index.html",
+        providers=configured_providers(),
+        env_tandoor_url=os.environ.get("TANDOOR_URL", "").strip(),
+        env_tandoor_token_set=bool(os.environ.get("TANDOOR_TOKEN", "").strip()),
+    )
 
 
-@app.post("/api/plan")
-def api_plan():
+@app.post("/api/plan/preview")
+def api_plan_preview():
     base_url = request.form.get("tandoor_url", "").strip() or os.environ.get("TANDOOR_URL", "").strip()
     base_url = normalize_tandoor_url(base_url)
     token = request.form.get("api_token", "").strip() or os.environ.get("TANDOOR_TOKEN", "").strip()
@@ -286,9 +349,27 @@ def api_plan():
         return jsonify({"error": f"server is missing {PROVIDERS[provider]['api_key_env']}"}), 500
 
     try:
-        result = build_plan(
+        result = propose_plan(
             provider, base_url, token, image.read(), image.mimetype or "image/jpeg", days, meals_per_day
         )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+    return jsonify(result)
+
+
+@app.post("/api/plan/confirm")
+def api_plan_confirm():
+    payload = request.get_json(silent=True) or {}
+    base_url = str(payload.get("tandoor_url", "")).strip() or os.environ.get("TANDOOR_URL", "").strip()
+    base_url = normalize_tandoor_url(base_url)
+    token = str(payload.get("api_token", "")).strip() or os.environ.get("TANDOOR_TOKEN", "").strip()
+    slots = payload.get("slots") or []
+
+    if not base_url or not token or not slots:
+        return jsonify({"error": "tandoor_url, api_token and at least one selected meal are required"}), 400
+
+    try:
+        result = confirm_plan(base_url, token, slots)
     except Exception as e:
         return jsonify({"error": str(e)}), 502
     return jsonify(result)
